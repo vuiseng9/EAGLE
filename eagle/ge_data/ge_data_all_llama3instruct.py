@@ -19,7 +19,7 @@ from datasets import load_dataset
 import json
 from fastchat.model.model_adapter import get_conversation_template
 
-bigname="meta-llama/Llama-2-7b-chat-hf"
+bigname="meta-llama/Meta-Llama-3-8B-Instruct"
 # bigname = "/home/lyh/weights/hf/llama/7B/"
 # smallname = "/home/lyh/weights/hf/llama/7B/"
 
@@ -53,19 +53,23 @@ def build_dataset_rank(
     original_columns1 = ds1.column_names
     # original_columns2 = ds2.column_names
     num_proc = 4
-
+    TOKENIZE_LEN=2048
+    
     def preprocess_function(examples):
         new_examples = {
             "conversation":[],
             "input_ids": [],
             "loss_mask": []
         }
+        counter_entry = 0
+        counter_overflow = 0
         for i in range(len(examples['id'])):
-            conv = get_conversation_template("llama-2-chat")
+            conv = get_conversation_template(bigname)
             sys_p="You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
             conv.system_message=sys_p
             roles = {"human": conv.roles[0], "gpt": conv.roles[1]}
             source= examples['conversations'][i]
+            source_id= examples['id'][i]
             if roles[source[0]["from"]] != conv.roles[0]:
                 # Skip the first one if it is not from human
                 source = source[1:]
@@ -81,13 +85,13 @@ def build_dataset_rank(
             #     print(i)
             # if i==57:
             #     print(i)
-            if not tokenizer.pad_token_id:
-                tokenizer.pad_token_id=tokenizer.unk_token_id
+            # if not tokenizer.pad_token_id:
+            #     tokenizer.pad_token_id=tokenizer.unk_token_id
 
             input_ids = tokenizer(
                 conversation,
                 return_tensors="pt",
-                max_length=2048,
+                max_length=TOKENIZE_LEN,
                 truncation=True,
             ).input_ids[0]
             loss_mask=torch.ones_like(input_ids)
@@ -96,45 +100,58 @@ def build_dataset_rank(
             sep = conv.sep + conv.roles[1] + " "
 
 
-
-            total_len = int(input_ids.ne(tokenizer.pad_token_id).sum())
-
-            turns = conversation.split(conv.sep2)
-            cur_len = 1
-            loss_mask[:cur_len] = 0
+            # NOTE: the main intent is to mask out all non assistant tokens for training
+            # thankfully for llama3, the tokenization is straightforward no additional token, index resolution is simple
+            # total_len = int(input_ids.ne(tokenizer.pad_token_id).sum())
+            turns = conversation.split(conv.stop_str)
+            cur_len = 0
+            loss_mask_indices = []
             for i, turn in enumerate(turns):
                 if turn == "":
                     break
                 turn_len = len(tokenizer(turn).input_ids)
 
-                parts = turn.split(sep)
-                if len(parts) != 2:
-                    break
-                parts[0] += sep
+                if '<|start_header_id|>assistant<|end_header_id|>' not in turn:
+                    loss_mask_indices.append(dict(turn_id=i, start=cur_len, end=cur_len+turn_len))
+                cur_len+=turn_len
+
+                # parts = turn.split(sep)
+                # if len(parts) != 2:
+                    # break
+                # parts[0] += sep
                 # "-2" is hardcoded for the Llama tokenizer to make the offset correct.
-                instruction_len = len(tokenizer(parts[0]).input_ids) - 2
+                # instruction_len = len(tokenizer(parts[0]).input_ids) - 2
 
                 # if i != 0 and not tokenizer.legacy:
                 #     # The legacy and non-legacy modes handle special tokens differently
                 #     instruction_len -= 1
 
                 # Ignore the user instructions
-                loss_mask[cur_len: cur_len + instruction_len] = 0
-                cur_len += turn_len
-                cur_len+=2
+                # loss_mask[cur_len: cur_len + instruction_len] = 0
+                # cur_len += turn_len
+                # cur_len+=2
 
-                if i != 0 and not tokenizer.legacy:
+                # if i != 0 and not tokenizer.legacy:
                     # The legacy and non-legacy modes handle special tokens differently
-                    cur_len -= 1
+                    # cur_len -= 1
 
-            loss_mask[cur_len:] = 0
+            for mask in loss_mask_indices:
+                if mask['end'] >= TOKENIZE_LEN:
+                    counter_entry += 1
+                    loss_mask[mask['start']:-1]=0
+                    # last token is always not mask out TODO this is a temp workaround.
+                else:
+                    loss_mask[mask['start']:mask['end']]=0
 
 
+            assert loss_mask.sum() > 0, f"pls debug source id {source_id}" 
+            if loss_mask.sum() == 1:
+                counter_overflow+=1
 
             new_examples["conversation"].append(conversation)
             new_examples["input_ids"].append(input_ids[None,:])
             new_examples["loss_mask"].append(loss_mask[None,:])
-
+        # print(f"counter_entry: {counter_entry}, counter_overflow: {counter_overflow}")
         return new_examples
 
     ds1 = ds1.map(
@@ -165,7 +182,7 @@ print(ds)
 #     )
 # bigmodel = AutoModelForCausalLM.from_pretrained(bigname, load_in_4bit=True, device_map={"": 0}, )
 # smallmodel = AutoModelForCausalLM.from_pretrained(smallname, load_in_4bit=True, device_map={"": 1}, )
-bigmodel = AutoModelForCausalLM.from_pretrained(bigname,  device_map="auto",torch_dtype=torch.float16)
+bigmodel = AutoModelForCausalLM.from_pretrained(bigname,  device_map="auto",torch_dtype=torch.bfloat16)
 #bigmodel = AutoModelForCausalLM.from_pretrained(bigname,  device_map="auto",load_in_8bit=True)
 bigmodel.eval()
 

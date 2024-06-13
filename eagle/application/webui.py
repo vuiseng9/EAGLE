@@ -223,7 +223,7 @@ parser.add_argument(
 parser.add_argument(
     "--load-in-4bit", action="store_true", help="Use 4-bit quantization"
 )
-parser.add_argument("--model-type", type=str, default="llama-2-chat",choices=["llama-2-chat","vicuna","mixtral"], help="llama-2-chat or vicuna, for chat template")
+parser.add_argument("--model-type", type=str, default="llama-2-chat",choices=["llama-2-chat","vicuna","mixtral", "llama-3"], help="llama-2-chat or vicuna, for chat template")
 parser.add_argument(
     "--max-new-token",
     type=int,

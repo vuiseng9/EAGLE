@@ -1,7 +1,10 @@
 import argparse
+# import datetime
+
+# ts = datetime.now().strftime('%m%d_%H%M%S')
 
 parser = argparse.ArgumentParser(description='sp')
-parser.add_argument('--basepath', type=str, default='/data/hf-model/Llama-2-7b-chat-hf')
+parser.add_argument('--basepath', type=str, default='/data/hf-model/Meta-Llama-3-8B-Instruct/')
 parser.add_argument('--configpath', type=str, default="config.json")
 parser.add_argument('--lr', type=float, default=3e-5)
 parser.add_argument('--bs', type=int, default=4)
@@ -54,8 +57,10 @@ from accelerate.utils import set_seed
 set_seed(0)
 accelerator = Accelerator(mixed_precision='bf16',
                           gradient_accumulation_steps=train_config["gradient_accumulation_steps"])
-from ..model.cnets import Model
-from ..model.configs import EConfig
+# from ..model.cnets import Model
+# from ..model.configs import EConfig
+from eagle.model.cnets import Model
+from eagle.model.configs import EConfig
 from typing import Any, Dict, List
 
 from torch import nn, optim
@@ -68,7 +73,7 @@ from transformers import get_linear_schedule_with_warmup, AutoConfig
 if accelerator.is_main_process:
     import wandb
 
-    wandb.init(project="eagle", entity="vchua", config=train_config)
+    wandb.init(project="eagle", entity="vchua", config=train_config) #TODO
 
 baseconfig = AutoConfig.from_pretrained(args.basepath)
 
