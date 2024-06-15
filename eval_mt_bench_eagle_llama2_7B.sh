@@ -3,8 +3,8 @@
 cd /data/vchua/dev/hgx1-240606-eagle-fork/eagle
 
 CUDA_ID=0
-DEV="--question-begin 5 --question-end 8"
-# unset DEV or set DEV=0
+# DEV="--question-begin 5 --question-end 8"
+DEV=""
 
 echo "[Info]: Running Llama2-7B Chat model in AutoRegressive mode on MT_BENCH"
 ARLABEL=llama-2-chat-7B-fp16-autoregressive
