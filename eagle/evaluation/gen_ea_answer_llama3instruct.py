@@ -8,20 +8,18 @@ import json
 import os
 script_dir = os.path.dirname(__file__)
 parent_dir = os.path.dirname(script_dir)
-#os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "6,7"
 import time
-import shortuuid
-from tqdm import tqdm
 
+import shortuuid
 from fastchat.llm_judge.common import load_questions
 from fastchat.model import get_conversation_template
+from tqdm import tqdm
 
-#try:
-from ..model.utils import *
 from ..model.ea_model import EaModel
 from ..model.kv_cache import initialize_past_key_values
+from ..model.utils import *
 from ..model.choices import *
-
 
 
 def ea_forward(input_ids, model, tokenizer, tree_choices, logits_processor=None, max_steps=512):
@@ -60,21 +58,48 @@ def ea_forward(input_ids, model, tokenizer, tree_choices, logits_processor=None,
 
     input_len = input_ids.shape[1]
     reset_tree_mode(model)
-
-    outputs = model.base_model(input_ids, past_key_values=past_key_values, use_cache=True)
+    tree_logits, logits, hidden_state, sample_token = initialize_tree(
+        input_ids, model, tree_buffers["tree_attn_mask"], past_key_values, logits_processor
+    )
     new_token = 0
 
     for idx in range(max_steps):
-        if logits_processor is not None:
-            logits = outputs.logits[:, -1]
-            logits = logits_processor(None, logits)
-            probabilities = torch.nn.functional.softmax(logits, dim=-1)
-            input_id = torch.multinomial(probabilities, 1)
-        else:
-            input_id = outputs.logits[:, -1:].argmax(dim=-1)
-        outputs = model.base_model(input_id, use_cache=True, past_key_values=past_key_values)
-        input_ids = torch.cat([input_ids, input_id], dim=-1)
-
+        candidates, cart_candidates_prob, tree_candidates = generate_candidates(
+            tree_logits,
+            tree_buffers["tree_indices"],
+            tree_buffers["retrieve_indices"],
+            sample_token,
+            logits_processor
+        )
+        logits, hidden_state_new, outputs = tree_decoding(
+            model,
+            tree_candidates,
+            past_key_values,
+            tree_buffers["tree_position_ids"],
+            input_ids,
+            tree_buffers["retrieve_indices_head"],
+        )
+        best_candidate, accept_length, sample_p = evaluate_posterior(
+            logits, candidates, logits_processor, cart_candidates_prob, tree_logits[2], tree_buffers["p_indices"],
+            tree_candidates, tree_buffers["b_indices"]
+        )
+        input_ids, tree_logits, new_token, hidden_state, sample_token = update_inference_inputs(
+            input_ids,
+            candidates,
+            best_candidate,
+            accept_length,
+            tree_buffers["retrieve_indices"],
+            logits_processor,
+            logits,
+            tree_logits,
+            new_token,
+            past_key_values_data,
+            current_length_data,
+            model,
+            hidden_state,
+            hidden_state_new,
+            sample_p
+        )
         if tokenizer.eos_token_id in input_ids[0, input_len:].tolist():
             break
         if new_token > 1024:
@@ -155,7 +180,7 @@ def get_model_answers(
         temperature,
         tree_choices,
 ):
-    #temperature = 0.0
+    # temperature = 0.0
 
     model = EaModel.from_pretrained(
         base_model_path=base_model_path,
@@ -184,6 +209,7 @@ def get_model_answers(
     # warmup
     for _ in range(3):
         torch.manual_seed(0)
+
         conv = get_conversation_template("llama-3")
         sys_p = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
         conv.system_message = sys_p
@@ -239,7 +265,6 @@ def get_model_answers(
 
             if conv.name == "xgen" and output.startswith("Assistant:"):
                 output = output.replace("Assistant:", "", 1).strip()
-
 
             turns.append(output)
             idxs.append(int(idx))
@@ -359,7 +384,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--load-in-8bit", action="store_false", help="Use 8-bit quantization"
     )
-    parser.add_argument("--model-id", type=str, default="ess-llama-3-8B-instruct-fp16-baseline")
+    parser.add_argument("--model-id", type=str, default="ess-llama3-8B-instruct-fp16")
     parser.add_argument(
         "--bench-name",
         type=str,
