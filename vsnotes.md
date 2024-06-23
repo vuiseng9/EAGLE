@@ -111,11 +111,17 @@ CUDA_VISIBLE_DEVICES=0 python -m eagle.evaluation.gen_ea_alpha_llama2chat --base
 CUDA_VISIBLE_DEVICES=0 python -m eagle.evaluation.gen_ea_alpha_llama2chat --base-model-path meta-llama/Llama-2-7b-chat-hf --ea-model-path /data2/vchua/run/hgx1-240606-eagle-fork/ea-llama2-7B-drafter/final --model-id accept_len_llama-2-chat-7B-fp16-eagle-local-epoch20 --temperature 0.0
 ```
 
+5. Quick profiling
+```bash
+CUDA_VISIBLE_DEVICES=0 python top_eagle.py
+CUDA_VISIBLE_DEVICES=0 python top_autoreg.py
+```
+
 understanding gap:
 1. how do we get a autoregressive baseline? webui, untick eagle
-2. what it is actually training? distillation or just standard cross entropy? data processing is just getting the features?
+2. what it is actually training? distillation or just standard cross entropy? data processing is just getting the features? cross entropy + feature regression
 3. how data is getting processed? early look, 68000 sharegpt conversation is split into ngpu partition
-4. what is sharegpt? how this is different from chatbot arena?
+4. what is sharegpt? crowd-source human conversations with ChatGPT/GPT4
 5. technical question, is KV cache context being wasted from drafter
 https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
 
