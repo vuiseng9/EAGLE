@@ -103,7 +103,13 @@ python eagle/evaluation/speed.py \
     --tokenizer_path meta-llama/Llama-2-7b-chat-hf 
 ```
 
+4. Calculate Alpha
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m eagle.evaluation.gen_ea_alpha_llama2chat --base-model-path meta-llama/Llama-2-7b-chat-hf --ea-model-path yuhuili/EAGLE-llama2-chat-7B --model-id accept_len_llama-2-chat-7B-fp16-eagle-official --temperature 0.0
+#  --question-begin 5 --question-end 8
 
+CUDA_VISIBLE_DEVICES=0 python -m eagle.evaluation.gen_ea_alpha_llama2chat --base-model-path meta-llama/Llama-2-7b-chat-hf --ea-model-path /data2/vchua/run/hgx1-240606-eagle-fork/ea-llama2-7B-drafter/final --model-id accept_len_llama-2-chat-7B-fp16-eagle-local-epoch20 --temperature 0.0
+```
 
 understanding gap:
 1. how do we get a autoregressive baseline? webui, untick eagle

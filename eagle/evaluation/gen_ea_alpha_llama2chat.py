@@ -13,17 +13,46 @@ set_seed(0)
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import time
+import math
 
 import shortuuid
 from fastchat.llm_judge.common import load_questions
 from fastchat.model import get_conversation_template
 from tqdm import tqdm
 
-from model.ea_model import EaModel
-from model.kv_cache import initialize_past_key_values
-from model.utils_alpha import *
-from model.choices import *
+from ..model.ea_model import EaModel
+from ..model.kv_cache import initialize_past_key_values
+from ..model.utils_alpha import *
+from ..model.choices import *
+from collections import Counter
+class AverageMeter:
+    """Computes and stores the average and current value"""
+    def __init__(self, meter_name):
+        self.name = meter_name
+        self.reset()
 
+    def reset(self):
+        self.val = 0  # current value
+        self.avg = 0  # average value
+        self.sum = 0  # sum of all values
+        self.count = 0  # number of values
+        self.min = math.inf
+        self.max = -math.inf
+        self.history = []
+
+    def update(self, val, n=1):
+        """Update the meter with new value and count."""
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.min = val if val < self.min else self.min
+        self.max = val if val > self.max else self.max
+        self.avg = self.sum / self.count if self.count != 0 else 0
+        self.history.append(val)
+
+    def current(self):
+        """Prints the current statistics of the meter."""
+        print(f"[{self.name}] Average: {self.avg:.4f}, Count: {self.count}, Min: {self.min}, Max: {self.max}")
 
 def ea_forward(input_ids, model, tokenizer, tree_choices, logits_processor=None, max_steps=512):
     assert input_ids.shape[0] == 1, "Only support batch size 1 for now!!"
@@ -68,6 +97,7 @@ def ea_forward(input_ids, model, tokenizer, tree_choices, logits_processor=None,
     )
     new_token = 0
 
+    accept_len_meter = AverageMeter("accept_length")
     for idx in range(max_steps):
         candidates, cart_candidates_prob, tree_candidates = generate_candidates(
             tree_logits,
@@ -88,6 +118,7 @@ def ea_forward(input_ids, model, tokenizer, tree_choices, logits_processor=None,
                 logits, candidates, logits_processor, cart_candidates_prob,alpha,alpha_num,tree_logits[2], tree_buffers["p_indices"],
             tree_candidates, tree_buffers["b_indices"]
             )
+        accept_len_meter.update(accept_length.item())
         input_ids, tree_logits, new_token, hidden_state, sample_token = update_inference_inputs(
             input_ids,
             candidates,
@@ -111,7 +142,9 @@ def ea_forward(input_ids, model, tokenizer, tree_choices, logits_processor=None,
             break
         if input_ids.shape[1] > 1960:
             break
-    return input_ids, new_token, idx, alpha, alpha_num
+    # accept_len_meter.current()
+    # sorted(Counter(accept_len_meter.history).items())
+    return input_ids, new_token, idx, alpha, alpha_num, accept_len_meter
 
 
 def run_eval(
@@ -233,7 +266,7 @@ def get_model_answers(
             torch.cuda.synchronize()
             start_time = time.time()
 
-            output_ids, new_token, idx, alpha, alpha_num = ea_forward(
+            output_ids, new_token, idx, alpha, alpha_num, accept_len_meter = ea_forward(
                 torch.as_tensor(input_ids).cuda(),
                 model,
                 tokenizer,
@@ -278,6 +311,7 @@ def get_model_answers(
             conv.messages[-1][-1] = output
     print('Warmup done')
 
+    global_accept_len_list = []
     # questions=questions[6:]
     for question in tqdm(questions):
 
@@ -291,6 +325,7 @@ def get_model_answers(
             idxs = []
             new_tokens = []
             wall_time = []
+            avg_accept_len = []
             for j in range(len(question["turns"])):
                 qs = question["turns"][j]
                 conv.append_message(conv.roles[0], qs)
@@ -301,7 +336,7 @@ def get_model_answers(
                 #try:
                 torch.cuda.synchronize()
                 start_time = time.time()
-                output_ids, new_token, idx, alpha, alpha_num = ea_forward(
+                output_ids, new_token, idx, alpha, alpha_num, accept_len_meter = ea_forward(
                     torch.as_tensor(input_ids).cuda(),
                     model,
                     tokenizer,
@@ -345,10 +380,12 @@ def get_model_answers(
                 idxs.append(int(idx))
                 new_tokens.append(int(new_token))
                 wall_time.append(total_time)
+                avg_accept_len.append(accept_len_meter.avg)
+                global_accept_len_list.append(accept_len_meter.avg)
                 conv.messages[-1][-1] = output
             # torch.cuda.empty_cache()
             choices.append({"index": i, "turns": turns, "idxs": idxs, "new_tokens": new_tokens, "wall_time": wall_time,
-                            "alpha": alpha, "alpha_num": alpha_num})
+                            "alpha": alpha, "alpha_num": alpha_num, "avg_accept_len": avg_accept_len})
 
         # Dump answers
         os.makedirs(os.path.dirname(answer_file), exist_ok=True)
@@ -359,6 +396,7 @@ def get_model_answers(
                 "model_id": model_id,
                 "choices": choices,
                 "tstamp": time.time(),
+                "rolling_avg_accept_len": sum(global_accept_len_list)/len(global_accept_len_list)
             }
             fout.write(json.dumps(ans_json) + "\n")
 
