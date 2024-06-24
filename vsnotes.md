@@ -117,6 +117,11 @@ CUDA_VISIBLE_DEVICES=0 python top_eagle.py
 CUDA_VISIBLE_DEVICES=0 python top_autoreg.py
 ```
 
+# Tree A
+CUDA_VISIBLE_DEVICES=0 python -m eagle.evaluation.gen_ea_alpha_llama2chat --base-model-path meta-llama/Llama-2-7b-chat-hf --ea-model-path yuhuili/EAGLE-llama2-chat-7B --model-id tree-a-accept_len_llama-2-chat-7B-fp16-eagle-official --temperature 0.0
+
+CUDA_VISIBLE_DEVICES=0 python -m eagle.evaluation.gen_ea_alpha_llama2chat --base-model-path meta-llama/Llama-2-7b-chat-hf --ea-model-path /data2/vchua/run/hgx1-240606-eagle-fork/ea-llama2-7B-drafter/final --model-id tree-a-accept_len_llama-2-chat-7B-fp16-eagle-local-epoch20 --temperature 0.0
+
 understanding gap:
 1. how do we get a autoregressive baseline? webui, untick eagle
 2. what it is actually training? distillation or just standard cross entropy? data processing is just getting the features? cross entropy + feature regression
