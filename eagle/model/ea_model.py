@@ -18,6 +18,51 @@ from .configs import EConfig
 from huggingface_hub import hf_hub_download
 
 
+import time
+from functools import wraps
+import math
+
+class Timer:
+    """Computes and stores the average and current value"""
+    def __init__(self, timer_name):
+        self.name = timer_name
+        self.reset()
+
+    def timeit(self, func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start_time = time.time()  # Capture start time
+            outputs = func(*args, **kwargs)  # Execute the function
+            torch.cuda.synchronize()
+            end_time = time.time()  # Capture end time
+            # print(f"{func.__name__} executed in {end_time - start_time:.4f} seconds")
+            # return end_time - start_time
+            self.update(end_time - start_time)
+            return outputs
+        return wrapper
+
+    def reset(self):
+        self.val = 0  # current value
+        self.avg = 0  # average value
+        self.sum = 0  # sum of all values
+        self.count = 0  # number of values
+        self.min = math.inf
+        self.max = -math.inf
+        self.history = []
+
+    def update(self, val, n=1):
+        """Update the meter with new value and count."""
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.min = val if val < self.min else self.min
+        self.max = val if val > self.max else self.max
+        self.avg = self.sum / self.count if self.count != 0 else 0
+        self.history.append(val)
+
+    def current(self):
+        """Prints the current statistics of the meter."""
+        print(f"[{self.name:>30}] #: {self.count}, Avg: {self.avg*1000:8.3f}, Min: {self.min*1000:8.3f}, Max: {self.min*1000:8.3f}, unit: milliseconds")
 
 
 class EaModel(nn.Module):
@@ -68,6 +113,25 @@ class EaModel(nn.Module):
         self.ea_layer.load_state_dict(ea_layer_state_dict, strict=True)
         self.ea_layer.to(self.base_model.dtype).to(device)
         self.ea_layer.init_tree()
+        
+        self.gen_cand_timer = None
+        self.tree_decoding_timer = None
+        self.eval_posterior_timer = None
+        self.draft_timer = None
+        if os.getenv('PROFILE_EAGLE') == "ON":
+            global generate_candidates, tree_decoding, evaluate_posterior, update_inference_inputs
+            self.gen_cand_timer = Timer("generate_candidates")
+            generate_candidates = self.gen_cand_timer.timeit(generate_candidates)
+
+            self.tree_decoding_timer = Timer("tree_decoding")
+            tree_decoding = self.tree_decoding_timer.timeit(tree_decoding)
+
+            self.eval_posterior_timer = Timer("evaluate_posterior")
+            evaluate_posterior = self.eval_posterior_timer.timeit(evaluate_posterior)
+
+            self.draft_timer = Timer("update_inference_inputs")
+            update_inference_inputs = self.draft_timer.timeit(update_inference_inputs)
+
 
     def get_tokenizer(self):
         """Get the tokenizer of the base model.
@@ -244,6 +308,13 @@ class EaModel(nn.Module):
         )
         new_token = 0
 
+        if os.getenv('PROFILE_EAGLE') == "ON":
+            self.gen_cand_timer.reset()
+            self.tree_decoding_timer.reset()
+            self.eval_posterior_timer.reset()
+            self.draft_timer.reset()
+
+
         for idx in range(max_length):
             #with Timer("all"):
             self.base_model.model.tree_mask = tree_mask
@@ -265,7 +336,7 @@ class EaModel(nn.Module):
             best_candidate, accept_length, sample_p = evaluate_posterior(
                 logits, candidates, logits_processor
             )
-            # print(accept_length)
+            print(accept_length)
             #with Timer("update_inference_inputs"):
             input_ids, draft_tokens, retrieve_indices,tree_mask,tree_position_ids, new_token, hidden_state, sample_token = update_inference_inputs(
                 input_ids,
